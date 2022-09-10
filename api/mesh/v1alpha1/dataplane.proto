@@ -1,0 +1,212 @@
+syntax = "proto3";
+
+package kuma.mesh.v1alpha1;
+
+option go_package = "github.com/kumahq/kuma/api/mesh/v1alpha1";
+
+import "mesh/options.proto";
+import "mesh/v1alpha1/metrics.proto";
+import "mesh/v1alpha1/envoy_admin.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/wrappers.proto";
+import "validate/validate.proto";
+import "kuma-doc/config.proto";
+
+option (doc.config) = {
+  type : Proxy,
+  name : "Dataplane",
+  file_name : "dataplane"
+};
+
+// Dataplane defines configuration of a side-car proxy.
+message Dataplane {
+
+  option (kuma.mesh.resource).name = "DataplaneResource";
+  option (kuma.mesh.resource).type = "Dataplane";
+  option (kuma.mesh.resource).package = "mesh";
+  option (kuma.mesh.resource).kds.send_to_global = true;
+  option (kuma.mesh.resource).ws.name = "dataplane";
+  option (kuma.mesh.resource).scope_namespace = true;
+
+  // Networking describes inbound and outbound interfaces of a dataplane.
+  message Networking {
+
+    // Public IP on which the dataplane is accessible in the network.
+    string address = 5 [ (doc.required) = true ];
+
+    reserved 6; // Formerly ingress mode message, see #3435
+
+    // In some situation, dataplane resides in a private network and not
+    // reachable via 'address'. advertisedAddress is configured with public
+    // routable address for such dataplane so that other dataplanes in the mesh
+    // can connect to it over advertisedAddress and not via address
+    // Note: Envoy binds to the address not advertisedAddress
+    string advertisedAddress = 7;
+
+    // Inbound describes a service implemented by the dataplane.
+    message Inbound {
+      // Port of the inbound interface that will forward requests to the
+      // service.
+      uint32 port = 3 [ (doc.required) = true ];
+
+      // Port of the service that requests will be forwarded to.
+      uint32 servicePort = 4;
+
+      // Address of the service that requests will be forwarded to.
+      // Empty value defaults to '127.0.0.1', since Kuma DP should be deployed
+      // next to service.
+      string serviceAddress = 6;
+
+      // Address on which inbound listener will be exposed. Defaults to
+      // networking.address.
+      string address = 5;
+
+      // Tags associated with an application this dataplane is deployed next to,
+      // e.g. kuma.io/service=web, version=1.0.
+      // `kuma.io/service` tag is mandatory.
+      map<string, string> tags = 2
+          [ (validate.rules).map.min_pairs = 1, (doc.required) = true ];
+
+      // Health describes the status of an inbound
+      message Health { bool ready = 1; }
+
+      // Health is an optional field filled automatically by Kuma Control Plane
+      // on Kubernetes if Pod has ReadinessProbe configured. If 'health' is
+      // equal to nil we consider dataplane as healthy. Unhealthy dataplanes
+      // will be excluded from Endpoints Discovery Service (EDS)
+      Health health = 7;
+
+      // ServiceProbe defines parameters for probing service's port
+      message ServiceProbe {
+        // Interval between consecutive health checks.
+        google.protobuf.Duration interval = 1;
+
+        // Maximum time to wait for a health check response.
+        google.protobuf.Duration timeout = 2;
+
+        // Number of consecutive unhealthy checks before considering a host
+        // unhealthy.
+        google.protobuf.UInt32Value unhealthy_threshold = 3;
+
+        // Number of consecutive healthy checks before considering a host
+        // healthy.
+        google.protobuf.UInt32Value healthy_threshold = 4;
+
+        message Tcp {}
+        // Tcp checker tries to establish tcp connection with destination
+        Tcp tcp = 5;
+      }
+
+      // ServiceProbe defines parameters for probing service's port
+      ServiceProbe serviceProbe = 8;
+    }
+
+    // Outbound describes a service consumed by the dataplane.
+    message Outbound {
+      // Address on which the service will be available to this dataplane.
+      // Defaults to 127.0.0.1
+      string address = 3;
+
+      // Port on which the service will be available to this dataplane.
+      uint32 port = 4 [ (doc.required) = true ];
+
+      // DEPRECATED: use networking.outbound[].tags
+      // Service name.
+      string service = 2
+          [ (validate.rules).string.hostname = true, deprecated = true ];
+
+      // Tags
+      map<string, string> tags = 5;
+    }
+
+    // Gateway describes a service that ingress should not be proxied.
+    message Gateway {
+      enum GatewayType {
+        // A DELEGATED gateway is a independently deployed proxy that
+        // receives inbound traffic that is not proxied by Kuma, and
+        // sends outbound traffic into the Kuma dataplane proxy.
+        DELEGATED = 0;
+        // The BUILTIN gateway type is experimental and unsupported.
+        BUILTIN = 1;
+      }
+
+      // Tags associated with a gateway (e.g., Kong, Contour, etc) this
+      // dataplane is deployed next to, e.g. service=gateway, env=prod.
+      // `service` tag is mandatory.
+      map<string, string> tags = 1
+          [ (validate.rules).map.min_pairs = 1, (doc.required) = true ];
+
+      // Type of gateway this dataplane manages. The default is a DELEGATED
+      // gateway, which is an external proxy. The BUILTIN gateway type causes
+      // the dataplane proxy itself to be configured as a gateway.
+      GatewayType type = 2 [ (doc.required) = true ];
+    }
+
+    // TransparentProxying describes configuration for transparent proxying.
+    message TransparentProxying {
+
+      // Port on which all inbound traffic is being transparently redirected.
+      uint32 redirect_port_inbound = 1
+          [ (validate.rules).uint32 = {lte : 65535} ];
+
+      // Port on which all outbound traffic is being transparently redirected.
+      uint32 redirect_port_outbound = 2
+          [ (validate.rules).uint32 = {lte : 65535} ];
+
+      // List of services that will be access directly via IP:PORT
+      repeated string direct_access_services = 3;
+
+      // Port on which all IPv6 inbound traffic is being transparently
+      // redirected.
+      uint32 redirect_port_inbound_v6 = 4
+          [ (validate.rules).uint32 = {lte : 65535} ];
+
+      // List of reachable services (represented by the value of
+      // kuma.io/service) via transparent proxying. Setting an explicit list can
+      // dramatically improve the performance of the mesh. If not specified, all
+      // services in the mesh are reachable.
+      repeated string reachable_services = 5;
+    }
+
+    // Gateway describes configuration of gateway of the dataplane.
+    Gateway gateway = 3;
+
+    // Inbound describes a list of inbound interfaces of the dataplane.
+    repeated Inbound inbound = 1;
+
+    // Outbound describes a list of outbound interfaces of the dataplane.
+    repeated Outbound outbound = 2;
+
+    // TransparentProxying describes configuration for transparent proxying.
+    TransparentProxying transparent_proxying = 4;
+
+    // Admin contains configuration related to Envoy Admin API
+    EnvoyAdmin admin = 8;
+  }
+
+  // Networking describes inbound and outbound interfaces of the dataplane.
+  Networking networking = 1;
+
+  // Configuration for metrics that should be collected and exposed by the
+  // dataplane.
+  //
+  // Settings defined here will override their respective defaults
+  // defined at a Mesh level.
+  MetricsBackend metrics = 2;
+
+  message Probes {
+    uint32 port = 1 [ (doc.required) = true ];
+
+    message Endpoint {
+      uint32 inbound_port = 1 [ (doc.required) = true ];
+      string inbound_path = 2 [ (doc.required) = true ];
+      string path = 3 [ (doc.required) = true ];
+    }
+
+    repeated Endpoint endpoints = 2 [ (doc.required) = true ];
+  }
+
+  // Probes describes list of endpoints which will redirect traffic from
+  // insecure port to localhost path
+  Probes probes = 3;
+}

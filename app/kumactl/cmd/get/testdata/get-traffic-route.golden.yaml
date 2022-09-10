@@ -1,0 +1,17 @@
+creationTime: "0001-01-01T00:00:00Z"
+mesh: default
+modificationTime: "0001-01-01T00:00:00Z"
+name: traffic-route-1
+type: TrafficRoute
+conf:
+  split:
+  - destination:
+      service: redis
+      version: "1.0"
+    weight: 90
+destinations:
+- match:
+    service: redis
+sources:
+- match:
+    service: backend

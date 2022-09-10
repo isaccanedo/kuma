@@ -1,0 +1,19 @@
+controlPlane:
+  url: https://localhost:5678
+  retry:
+    backoff: 3s
+    maxDuration: 5m0s
+  caCert: ""
+  caCertFile: ""
+dataplane:
+  proxyType: dataplane
+  drainTime: 30s
+dataplaneRuntime:
+  binaryPath: envoy
+dns:
+  enabled: true
+  coreDnsPort: 15053
+  coreDnsEmptyPort: 15055
+  envoyDnsPort: 15054
+  coreDnsBinaryPath: coredns
+  prometheusPort: 19153
